@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import math
 import pandas as pd
 
 
@@ -34,10 +35,10 @@ df = pd.read_csv(RISK_PATH)
 
 
 # ============================================================
-# CALCULATE SOURCE AVAILABILITY
+# SOURCE AVAILABILITY
 # ============================================================
 
-# A source store must keep its safety stock.
+# Source store must keep its safety stock.
 df["available_for_transfer"] = (
     df["current_stock"]
     - df["safety_stock"]
@@ -45,12 +46,22 @@ df["available_for_transfer"] = (
 
 
 # ============================================================
-# CALCULATE DESTINATION SHORTAGE
+# DESTINATION SHORTAGE
 # ============================================================
 
-df["shortage"] = (
+# Required inventory =
+# forecast demand + safety stock
+#
+# Shortage =
+# required inventory - current inventory
+
+df["required_stock"] = (
     df["forecast_demand"]
     + df["safety_stock"]
+)
+
+df["shortage"] = (
+    df["required_stock"]
     - df["current_stock"]
 ).clip(lower=0)
 
@@ -60,7 +71,7 @@ df["shortage"] = (
 # ============================================================
 
 sources = df[
-    df["available_for_transfer"] > 0
+    df["available_for_transfer"] >= 1
 ].copy()
 
 
@@ -77,12 +88,15 @@ recommendations = []
 
 
 # ============================================================
-# OPTIMIZATION
+# MATCH SOURCES TO DESTINATIONS
 # ============================================================
 
 for _, destination in destinations.iterrows():
 
-    product_id = int(destination["product_id"])
+    product_id = int(
+        destination["product_id"]
+    )
+
     destination_store = int(
         destination["store_id"]
     )
@@ -94,7 +108,10 @@ for _, destination in destinations.iterrows():
     if shortage <= 0:
         continue
 
-    # Find stores having the same product.
+    # --------------------------------------------------------
+    # Find stores with same product
+    # --------------------------------------------------------
+
     candidates = sources[
         (sources["product_id"] == product_id)
         &
@@ -104,7 +121,7 @@ for _, destination in destinations.iterrows():
         )
     ].copy()
 
-    # Prefer stores with the largest safe surplus.
+    # Largest safe surplus first.
     candidates = candidates.sort_values(
         "available_for_transfer",
         ascending=False,
@@ -121,10 +138,13 @@ for _, destination in destinations.iterrows():
             source["available_for_transfer"]
         )
 
-        if available <= 0:
+        if available < 1:
             continue
 
-        # Destination capacity check.
+        # ----------------------------------------------------
+        # Destination capacity
+        # ----------------------------------------------------
+
         destination_capacity = float(
             destination["capacity"]
         )
@@ -139,30 +159,35 @@ for _, destination in destinations.iterrows():
             0,
         )
 
-        if capacity_available <= 0:
+        if capacity_available < 1:
             continue
 
-        transfer_quantity = min(
+        # ----------------------------------------------------
+        # Maximum feasible transfer
+        # ----------------------------------------------------
+
+        maximum_transfer = min(
             available,
             remaining_shortage,
             capacity_available,
         )
 
-        transfer_quantity = int(
-            transfer_quantity
+        # Physical inventory must be whole units.
+        transfer_quantity = math.floor(
+            maximum_transfer
         )
 
         if transfer_quantity <= 0:
             continue
 
         # ----------------------------------------------------
-        # Priority score
+        # Priority
         # ----------------------------------------------------
 
         shortage_ratio = (
             shortage
             / max(
-                destination["safety_stock"],
+                float(destination["safety_stock"]),
                 1,
             )
         )
@@ -172,32 +197,56 @@ for _, destination in destinations.iterrows():
             10,
         )
 
+        # ----------------------------------------------------
+        # Remaining shortage after transfer
+        # ----------------------------------------------------
+
+        remaining_after_transfer = max(
+            remaining_shortage
+            - transfer_quantity,
+            0,
+        )
+
         recommendations.append({
             "product_id": product_id,
+
             "from_store_id": int(
                 source["store_id"]
             ),
+
             "to_store_id": destination_store,
-            "transfer_quantity": transfer_quantity,
+
+            "transfer_quantity": int(
+                transfer_quantity
+            ),
+
             "destination_shortage": round(
                 shortage,
                 2,
             ),
+
+            "remaining_shortage": round(
+                remaining_after_transfer,
+                2,
+            ),
+
             "source_available": round(
                 available,
                 2,
             ),
+
             "destination_capacity": int(
                 destination_capacity
             ),
+
             "priority_score": round(
                 priority,
                 2,
             ),
         })
 
-        remaining_shortage -= (
-            transfer_quantity
+        remaining_shortage = (
+            remaining_after_transfer
         )
 
 
@@ -211,7 +260,7 @@ result = pd.DataFrame(
 
 
 # ============================================================
-# SORT BY PRIORITY
+# SORT
 # ============================================================
 
 if not result.empty:
@@ -261,12 +310,25 @@ if not result.empty:
     )
 
     print()
+
     print(
         "Total units recommended:",
         int(
             result[
                 "transfer_quantity"
             ].sum()
+        ),
+    )
+
+    print()
+
+    print(
+        "Total remaining shortage:",
+        round(
+            result[
+                "remaining_shortage"
+            ].sum(),
+            2,
         ),
     )
 
