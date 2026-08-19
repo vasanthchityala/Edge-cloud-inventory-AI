@@ -41,3 +41,6 @@ data/analysis/
 
 # Jupyter
 .ipynb_checkpoints/
+
+# ML models
+*.joblib

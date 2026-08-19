@@ -1,0 +1,4 @@
+model,test_mae,test_rmse
+Naive_7_Day_Average,8.0056,11.6429
+Random_Forest,6.4430,9.1095
+HistGradientBoosting,6.3240,8.9323
